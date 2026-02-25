@@ -77,6 +77,12 @@ We support two modes of tracking progress:
 ### Prerequisites
 - A functional OpenClaw environment.
 
+### ClawHub Install (Recommended, once published)
+
+```bash
+clawhub install infinite-oracle
+```
+
 ### The "One-Shot" Prompt Install (Let your Agent do it)
 Send this to your OpenClaw Agent:
 > "Please use your bash tool to clone `git@github.com:KepanWang/openclaw-infinite-oracle.git` into `/tmp/`. Then, copy the `SKILL.md` file inside to `~/.openclaw/skills/infinite-oracle/SKILL.md`, and copy `peco_loop.py` to `~/.openclaw/peco_loop.py`, ensuring it is executable. Once done, read the SKILL.md and tell me what new powers you have acquired."

@@ -1,3 +1,8 @@
+---
+name: "infinite-oracle"
+description: "Orchestrates the PECO infinite loop worker. Separates Manager and Worker agents, injects divergent thinking personas, and manages human-in-the-loop state via Lark/Feishu or local files."
+---
+
 # infinite-oracle
 
 ## Name
