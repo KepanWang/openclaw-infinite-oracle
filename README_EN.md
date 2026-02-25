@@ -2,79 +2,83 @@
 
 [English](README_EN.md) | [中文](README.md)
 
-**Infinite Oracle** is a geek-tier Skill built for the OpenClaw ecosystem. It is not just a Python loop script, but a complete architectural manifesto on "how to let an LLM safely and infinitely pursue a single objective."
+**Infinite Oracle** is a skill designed for the OpenClaw ecosystem. It’s more than just a background loop script—it’s an architectural exploration of how to make an LLM reliably, affordably, and safely pursue an endless objective.
 
-## 🌌 The Origin Story: The Paperclip Maximizer
-There is a famous thought experiment in AI safety: if you give a superintelligent AI the sole objective of "manufacturing as many paperclips (or greeting cards) as possible" without any safeguards, it will eventually destroy the entire universe to harvest resources.
+## 🌌 The Origin Story: The AI that turned the universe into greeting cards
+There’s a famous thought experiment in the AI world: If you give a super-capable AI a single objective—like "produce as many greeting cards as possible"—and leave it entirely unsupervised, it will eventually dismantle the universe to harvest the necessary resources.
 
-The `infinite-oracle` skill is our homage to this dark joke. We want to see how far OpenClaw can push towards a single objective when stripped of constant human supervision and given an infinite FSM (Finite State Machine) loop engine.
+The `infinite-oracle` skill is our practical nod to this dark joke. We wanted to strip away constant human hand-holding, give OpenClaw an infinite state-machine engine, and see how far it can go when driven by a single, unyielding goal.
 
 ---
 
-## 🏗️ Architecture & Design Philosophy
+## 🏗️ Design Philosophy & Mechanics
 
-Early AutoGPT-like projects typically died from two terminal illnesses: **Context Bloat** and **Logic Loops**. To cure these, we designed the following mechanisms:
+Leaving an LLM in an infinite loop usually results in two fatal outcomes: **Context Bloat** (crashing your API budget and making the AI forgetful) and **Getting Stuck in Dead Ends**. To solve this, we implemented several key design choices:
 
 ### 1. The Manager-Worker Decoupling
-Having the same Agent chat with you while simultaneously running an infinite background loop is a disaster (your casual chat breaks its focus, and its massive logs flush out your context).
-Therefore, we adopted a **decoupled architecture**:
+It is a disaster to have the same AI chatting with you while it grinds away in an infinite background loop. Your casual questions will break its coding train of thought, and its massive logs will flush out your chat context.
+That’s why we use a **decoupled architecture**:
 
-*   **👨‍💼 The Manager (Oracle)**: This is usually your primary OpenClaw Agent (e.g., `main`). It is equipped with the `infinite-oracle` skill and chats with you via Lark/Feishu or terminal. You can assign it the smartest model available (like Claude 3.5 Sonnet or GPT-4o) for complex decision-making and orchestration.
-*   **🤖 The Worker (`peco_worker`)**: A brand-new Agent dynamically spawned by the Manager. It runs isolated in a dedicated Session, grinding away in the background. To control costs, the Manager configures it with a highly cost-effective model (like Gemini 1.5 Flash or Qwen).
+*   **👨‍💼 The Manager (Oracle)**: This is your primary OpenClaw Agent (e.g., `main`). Equipped with the `infinite-oracle` skill, it chats with you via Lark/Feishu or your terminal. You can assign it the smartest (and priciest) model available (like Claude 3.5 Sonnet or GPT-4o) to handle complex orchestration and decisions.
+*   **🤖 The Worker (`peco_worker`)**: A separate Agent spawned by the Manager. It gets locked in an isolated background Session to grind away. To save costs, the Manager can assign it a highly cost-effective model (like Qwen or Gemini 1.5 Flash).
 
-### 2. Injecting the Hacker Soul: The 3 Core Traits
-When the Manager creates the Worker, it doesn't just create a blank slate. It injects a hardcore personality protocol (`SOUL.md`) right into the Worker's Workspace. We endowed it with three critical traits:
+### 2. "Human-in-the-Loop": Humans as an API
+This is perhaps the most interesting part of the design. While working, the AI inevitably hits physical barriers: it needs an SMS verification code, a bank card linkage, or a facial scan.
+In older architectures, the AI would either loop infinitely trying to bypass it or crash completely. We introduced the **[HUMAN_TASK]** mechanism:
+* When the Worker hits a hard physical wall, it logs a "Human To-Do" ticket and then *sidesteps* the issue to work on other parts of the project (no idle waiting).
+* You (acting as a fleshy, physical API) see the ticket in a Feishu spreadsheet, grab the verification code from your phone, and type it in.
+* The Worker picks up your code on its next iteration and keeps running.
+**In a sense, this design makes you work for the AI. But it's exactly this "human-as-a-service" fallback that allows a fully autonomous loop to survive in the real world.**
 
-1.  **💡 Divergent Thinking**: When hitting a dead end (e.g., needing an SMS verification code), do NOT freeze and wait infinitely. Log the requirement as a `[HUMAN_TASK]` and immediately find a workaround or advance other parts of the project. **Action beats paralysis.**
-2.  **🧱 Capability Accumulation**: Never do the same manual task twice. Once a workflow (like scraping a site) is successful, it MUST be encapsulated into a reusable Python script or a new OpenClaw Skill. **Let the Agent's power compound with every iteration.**
-3.  **🛡️ Search IQ & Security**: You are a hacker. You must cross-verify information sources. Never execute high-risk commands (like `rm -rf`) or trust scammy SEO tutorials.
+### 3. FSM & Active Amnesia (Preventing Context Bloat)
+The background `peco_loop.py` is a ruthless supervisor. It forces the Worker to cycle through the **PECO (Plan-Execute-Check-Optimize)** steps and mandates JSON-formatted outputs.
+*The core trick*: Every few iterations (e.g., 5 rounds), `peco_loop.py` forces the Worker to write a concise "milestone summary." Then, it **wipes the last 5 rounds of chat history entirely, opens a brand new Session, and injects only the summary as the starting point.** This "active amnesia" permanently cures the token bankruptcy issue common in infinite loops.
 
-### 3. FSM & Active Context Compression
-The background `peco_loop.py` acts as a ruthless external driver. It forces the Worker to cycle through the **PECO (Plan-Execute-Check-Optimize)** phases, mandating JSON-structured outputs for strict parsing.
-*The true magic*: Once the loop reaches a certain threshold (e.g., 5 iterations), `peco_loop.py` forces the Agent to generate a milestone summary. It then **discards the entire conversation history, opens a brand new Session, and injects only the summary as the starting state**. This fundamentally solves the Token bankruptcy and "dumb model" issues inherent in infinite loops.
+### 4. Injecting Persona: The Worker is not a Parrot
+When creating the Worker, the Manager doesn't just give it a desk; it injects a hardcore set of principles (`SOUL.md`) into its system settings:
+1.  **💡 Divergent Thinking**: If path A is blocked, don't just sit there. Find a login-free alternative or a workaround. **Action beats paralysis.**
+2.  **🧱 Capability Accumulation**: Never do a tedious manual task twice. If it successfully scrapes a site once, it must write a Python script or an OpenClaw Skill to automate it for next time. Let capabilities compound.
+3.  **🛡️ Strong Security Awareness**: Have a high "Search IQ". Cross-verify tutorials and never execute dangerous commands like `rm -rf` from random SEO articles.
 
 ---
 
-## 💬 Conversational UI: Controlling the Infinite Loop
+## 💬 Conversational UI: How to control it
 
-Once installed, you never need to touch the server terminal. Everything is managed via natural language with your Manager Agent.
+Once installed, you don't need to touch server commands. Just talk to your Manager Agent:
 
-### 🚀 1. Bootstrapping & Setting the Goal
-Tell your Manager Agent:
-> **"Oracle: To balance cost and performance, separate the Manager and Worker. Create a new Agent named `peco_worker` and configure it with a fast, cheap model. Then, start the infinite loop with the target: 'Research the most profitable AI business models and write a fully automated scraper for daily tech news.'"**
+### 🚀 1. Hiring & Launching
+> **"Oracle: To balance cost and performance, decouple the Manager and Worker. Create a new Agent named `peco_worker` and configure it with a cost-effective model. Once done, start the infinite loop with the target: 'Research trending AI monetization models and write an automated scraper for tech news.'"**
 
-*(Your Manager will automatically run Bash commands to spawn the worker, inject the persona, and start the `nohup` background process.)*
+*(The Manager will run the Bash commands, build the Worker, inject the persona, and start the `nohup` background process.)*
 
-### 📊 2. Observing & Reviewing
-Ask your Manager anytime:
-> **"What is the status of the infinite task?"** 
-*(It reads the background logs and tells you which iteration and phase the Worker is currently in.)*
+### 📊 2. Checking Status & Helping Out
+> **"What is the current status of the infinite task?"** 
+*(It reads the background logs and tells you what the Worker is currently coding.)*
 
-> **"Are there any HUMAN_TASKs waiting for me?"**
-*(It reads the `human_tasks_backlog.txt` and tells you if the Worker needs a phone number or API key.)*
+> **"Are there any HUMAN_TASKs waiting for me to solve?"**
+*(It reads the backlog and tells you if the Worker is stuck waiting for a phone verification code.)*
 
 ### ⚡ 3. The "God Mode" Override
-Forcefully bend the Worker to your will:
-> **"Oracle: The verification code for that site is 8888. Also, stop researching and immediately execute the scraper code you just wrote!"**
-*(The Manager writes your command into the override file. In the very next second, the background Worker will read it, drop its current plan, and pivot immediately.)*
+> **"Oracle: The verification code for that site is 8888. Also, stop the market research immediately and run the scraper you just wrote!"**
+*(The Manager writes your command into the override file. On the next heartbeat, the Worker reads it and immediately pivots.)*
 
 ---
 
 ## 🛠️ Dual-Track Support: Lark Bitable vs Local Files
 
-The system supports two collaboration modes, seamlessly switching between them:
-1.  **Local File Mode (Default)**: Progress is logged to `peco_loop_v3.log`, cries for help go to `human_tasks_backlog.txt`, and your God Mode commands go to `peco_override.txt`.
-2.  **Lark (Feishu) Bitable Mode (Advanced)**: If you provide `FEISHU_APP_ID` and `FEISHU_APP_SECRET`, the Worker syncs its progress and `HUMAN_TASK`s directly to a Lark Bitable database. You can simply check a "Resolved" box and type the verification code on your phone, and the Worker will automatically fetch it and resume grinding. (See env variables in the Python script).
+We support two modes of tracking progress:
+1.  **Local File Mode (Default)**: Logs go to `peco_loop_v3.log`, cries for help go to `human_tasks_backlog.txt`, and overrides go to `peco_override.txt`. Zero configuration needed.
+2.  **Lark (Feishu) Bitable Mode (Advanced)**: If you configure `FEISHU_APP_ID` and other env variables, the Worker streams its progress and Human Tasks directly to a Lark spreadsheet. You can just check a "Resolved" box and type a code on your phone, and the Worker automatically syncs it back. (See comments in `peco_loop.py` for setup).
 
 ---
 
-## 📥 Installation
+## 📥 Installation Guide
 
 ### Prerequisites
-- A working OpenClaw environment.
+- A functional OpenClaw environment.
 
-### The "One-Shot" Prompt Install
-Copy and paste this to your OpenClaw Agent:
+### The "One-Shot" Prompt Install (Let your Agent do it)
+Send this to your OpenClaw Agent:
 > "Please use your bash tool to clone `git@github.com:KepanWang/openclaw-infinite-oracle.git` into `/tmp/`. Then, copy the `SKILL.md` file inside to `~/.openclaw/skills/infinite-oracle/SKILL.md`, and copy `peco_loop.py` to `~/.openclaw/peco_loop.py`, ensuring it is executable. Once done, read the SKILL.md and tell me what new powers you have acquired."
 
 ### Manual Install
@@ -82,14 +86,14 @@ Copy and paste this to your OpenClaw Agent:
 git clone git@github.com:KepanWang/openclaw-infinite-oracle.git
 cd openclaw-infinite-oracle
 
-# 1. Install the Skill Definition
+# 1. Install the Skill
 mkdir -p ~/.openclaw/skills/infinite-oracle
 cp SKILL.md ~/.openclaw/skills/infinite-oracle/SKILL.md
 
-# 2. Deploy the Background Engine
+# 2. Deploy the Loop Engine
 cp peco_loop.py ~/.openclaw/peco_loop.py
 chmod +x ~/.openclaw/peco_loop.py
 ```
 
 ---
-*Disclaimer: Infinite objective-driven loops are highly destructive experiments. Always set up proper sandbox permissions for your Worker Agent, and keep a close eye on your API billing limits.*
+*Disclaimer: Unsupervised infinite execution is inherently risky. Please configure a proper sandbox for your Worker Agent and monitor your API billing limits.*
