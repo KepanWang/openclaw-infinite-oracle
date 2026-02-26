@@ -1,13 +1,8 @@
-# ♾️ OpenClaw Infinite Oracle
+# ♾️ OpenClaw Infinite Oracle (Infinite Mode)
 
 [English](README_EN.md) | [中文](README.md)
 
 **Infinite Oracle** is a skill designed for the OpenClaw ecosystem. It's more than just a background loop script—it's an architectural exploration of how to make an LLM reliably, affordably, and safely pursue an endless objective.
-
-## 🌌 The Origin Story: The AI that turned the universe into greeting cards
-There's a famous thought experiment in the AI world: If you give a super-capable AI a single objective—like "produce as many greeting cards as possible"—and leave it entirely unsupervised, it will eventually dismantle the universe to harvest the necessary resources.
-
-The `infinite-oracle` skill is our practical nod to this dark joke. We wanted to strip away constant human hand-holding, give OpenClaw an infinite state-machine engine, and see how far it can go when driven by a single, unyielding goal.
 
 ---
 
@@ -20,6 +15,12 @@ In this system, **you are the god**. Every instruction you give the AI is an Ora
 Yes, this is a playful nod to OKR (Objectives and Key Results)—your Objectives become its Oracles, and its purpose is to deliver those Key Results.
 
 ---
+
+## 🌌 The Origin Story: The AI that turned the universe into greeting cards
+There's a famous thought experiment in the AI world: If you give a super-capable AI a single objective—like "produce as many greeting cards as possible"—and leave it entirely unsupervised, it will eventually dismantle the universe to harvest the necessary resources.
+
+The `infinite-oracle` skill is our practical nod to this dark joke. We wanted to strip away constant human hand-holding, give OpenClaw an infinite state-machine engine, and see how far it can go when driven by a single, unyielding goal.
+
 
 ## 🏗️ Design Philosophy & Mechanics
 
@@ -94,7 +95,7 @@ If you chat with your main Agent via Lark/Feishu, the Manager will proactively h
 ### Prerequisites
 - A functional OpenClaw environment.
 
-### ClawHub Install (Recommended, once published)
+### ClawHub Install
 
 ```bash
 clawhub install infinite-oracle
