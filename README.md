@@ -1,6 +1,6 @@
 # ♾️ OpenClaw Infinite Oracle (无限模式)
 
-在古希腊，神谕（Oracle）是凡人从神明那里获取的启示。凡人只能敬畏地聆听，然后竭尽全力去执行，产生Key Result。当Agent有了OKR（Oracle-Key Result），经过时间和投入，会以何种让人惊喜（或惊吓）的方式实现（或失败）？
+> *在古希腊，神谕（Oracle）是凡人从神明那里获取的启示。凡人只能敬畏地聆听，然后竭尽全力去执行，产生Key Result。当Agent有了OKR（Oracle-Key Result），经过时间和投入，会以何种让人惊喜（或惊吓）的方式实现（或失败）？*
 
 [English](README_EN.md) | [中文](README.md)
 
