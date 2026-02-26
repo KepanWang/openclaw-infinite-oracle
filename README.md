@@ -1,8 +1,8 @@
-# ♾️ OpenClaw Infinite Oracle (无限模式)
-
-[English](README_EN.md) | [中文](README.md)
+# ♾️ OpenClaw Infinite Oracle (无限求索)
 
 > *在古希腊，神谕（Oracle）是凡人从神明那里获取的启示。凡人只能敬畏地聆听，然后竭尽全力去执行，产生Key Result。当Agent有了OKR（Oracle-Key Result），经过时间和投入，会以何种让人惊喜（或惊吓）的方式实现（或失败）？*
+
+[English](README_EN.md) | [中文](README.md)
 
 **Infinite Oracle** 是一个为 OpenClaw 生态设计的技能 (Skill)。它不仅是一段能跑起来的 Python 循环脚本，更是关于"如何让 AI 稳定、低成本、可控地去追求一个无限目标"的尝试方案。
 
