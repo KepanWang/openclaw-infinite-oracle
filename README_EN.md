@@ -1,27 +1,14 @@
 # ♾️ OpenClaw Infinite Oracle (Infinite Mode)
 
+In ancient Greece, an Oracle was divine revelation that mortals received from the gods. Mortals could only listen with reverence, then exert all their might to execute it and produce Key Results. When an Agent has OKR (Oracle-Key Result), given time and investment, in what surprising (or frightening) ways will it realize (or fail) them?
+
 [English](README_EN.md) | [中文](README.md)
 
 **Infinite Oracle** is a skill designed for the OpenClaw ecosystem. It's more than just a background loop script—it's an architectural exploration of how to make an LLM reliably, affordably, and safely pursue an endless objective.
 
 ---
 
-## 📛 The Meaning of "Oracle"
-
-In ancient Greece, an Oracle was divine revelation—a message from the gods that mortals could only receive with reverence, then execute with all their might.
-
-In this system, **you are the god**. Every instruction you give the AI is an Oracle. Its job is to spare no effort in fulfilling your Oracle and delivering the Key Result.
-
-Yes, this is a playful nod to OKR (Objectives and Key Results)—your Objectives become its Oracles, and its purpose is to deliver those Key Results.
-
----
-
-## 🌌 The Origin Story: The AI that turned the universe into greeting cards
-There's a famous thought experiment in the AI world: If you give a super-capable AI a single objective—like "produce as many greeting cards as possible"—and leave it entirely unsupervised, it will eventually dismantle the universe to harvest the necessary resources.
-
-The `infinite-oracle` skill is our practical nod to this dark joke. We wanted to strip away constant human hand-holding, give OpenClaw an infinite state-machine engine, and see how far it can go when driven by a single, unyielding goal.
-
-
+## 🏗️ Design Philosophy & Mechanics
 ## 🏗️ Design Philosophy & Mechanics
 
 Leaving an LLM in an infinite loop usually results in two fatal outcomes: **Context Bloat** (crashing your API budget and making the AI forgetful) and **Getting Stuck in Dead Ends**. To solve this, we implemented several key design choices:
