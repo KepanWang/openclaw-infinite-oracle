@@ -1,6 +1,6 @@
-# ♾️ OpenClaw Infinite Oracle (Infinite Mode)
+# ♾️ OpenClaw Infinite Oracle
 
-In ancient Greece, an Oracle was divine revelation that mortals received from the gods. Mortals could only listen with reverence, then exert all their might to execute it and produce Key Results. When an Agent has OKR (Oracle-Key Result), given time and investment, in what surprising (or frightening) ways will it realize (or fail) them?
+In ancient Greece, an Oracle was a revelation from the gods to mortals. Mortals could only listen in awe and execute with all their might to produce a Key Result. When an Agent is given an OKR (Oracle-Key Result), given enough time and resources, in what surprising (or terrifying) ways will it succeed (or fail)?
 
 [English](README_EN.md) | [中文](README.md)
 
