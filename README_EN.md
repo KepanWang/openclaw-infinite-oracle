@@ -9,8 +9,6 @@ In ancient Greece, an Oracle was divine revelation that mortals received from th
 ---
 
 ## 🏗️ Design Philosophy & Mechanics
-## 🏗️ Design Philosophy & Mechanics
-
 Leaving an LLM in an infinite loop usually results in two fatal outcomes: **Context Bloat** (crashing your API budget and making the AI forgetful) and **Getting Stuck in Dead Ends**. To solve this, we implemented several key design choices:
 
 ### 1. The Manager-Worker Decoupling
