@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-PECO loop daemon for ZiFang OpenClaw agent.
+PECO loop daemon for OpenClaw infinite execution.
 
-Implements PLAN -> EXECUTE -> CHECK -> OPTIMIZE infinite loop with:
+Implements PLAN -> EXECUTE -> CHECK -> OPTIMIZE loop with:
 - strict structured output parsing ([PHASE:...] + ```json block)
-- subprocess-driven agent calls via /root/.openclaw/agent_talk.py send <session> -
+- direct Gateway API calls to /v1/chat/completions
 - manual override file support
-- periodic context compression + session rotation
 - simple circuit breaker
 - optional Feishu webhook notifications (with mock/log fallback)
 """
@@ -17,10 +16,9 @@ import argparse
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -53,12 +51,21 @@ FEISHU_DEFAULT_APP_TOKEN = ""
 FEISHU_DEFAULT_PROGRESS_TABLE_ID = ""
 FEISHU_DEFAULT_HUMAN_TABLE_ID = ""
 
-SYSTEM_PROMPT_TEMPLATE = """You are running in a strict PECO control loop.
-You must follow this response contract exactly:
-1) Include one phase tag line: [PHASE:PLAN|EXECUTE|CHECK|OPTIMIZE]
-2) Optionally include one human assistance tag when needed: [HUMAN_TASK:<what human must do>]
-3) Include one JSON block in ```json ... ```
-4) JSON must contain keys:
+GATEWAY_BASE_URL = "http://127.0.0.1:17369"
+GATEWAY_CONFIG_CANDIDATES = (
+    Path("/root/.openclaw/openclaw.json"),
+    Path.home() / ".openclaw" / "openclaw.json",
+)
+
+SYSTEM_PROMPT_TEMPLATE = """You are running inside a PECO (PLAN -> EXECUTE -> CHECK -> OPTIMIZE) loop.
+Keep your original OpenClaw personality, voice, and reasoning style. Do not flatten into robotic tone.
+The PECO contract only constrains structure and loop discipline.
+
+Output contract:
+1) Include exactly one phase tag line: [PHASE:PLAN|EXECUTE|CHECK|OPTIMIZE]
+2) Optionally include one human-assistance tag when needed: [HUMAN_TASK:<task>]
+3) Include exactly one JSON block in ```json ... ```
+4) JSON keys (required):
    - phase (string)
    - next_phase (string)
    - decision (continue|retry|halt)
@@ -66,18 +73,67 @@ You must follow this response contract exactly:
    - summary (string)
    - phase_payload (object)
    - risks (array)
-5) Keep output concise and machine-parseable.
-6) Do not omit phase tag or json block.
-7) In EXECUTE phase, limit tool usage to 1-2 fast commands. Do NOT run long scans or commands that take >2 minutes.
-8) If blocked by a human-only requirement (bank card, verification code, legal identity check, account ownership), keep advancing other non-blocked work and add [HUMAN_TASK:...].
-9) decision=halt is only for fully blocked situations where no productive progress can continue.
+5) Keep output concise, concrete, and machine-parseable.
+6) EXECUTE phase must use 1-2 fast actions only; avoid long scans or commands over 2 minutes.
+7) If blocked by human-only requirements, continue non-blocked work and emit [HUMAN_TASK:...].
+8) HUMAN_TASK must be async-friendly: no tight deadlines, avoid "reply in 10 minutes", prefer one-time durable setup/actions.
+9) decision=halt only when no meaningful progress path exists.
 """
 
-PHASE_GUIDANCE = {
-    "PLAN": "Define clear next actions and acceptance checks.",
-    "EXECUTE": "Execute the plan incrementally and report concrete outputs.",
-    "CHECK": "Evaluate results against objective and acceptance criteria.",
-    "OPTIMIZE": "Propose improvements and efficiency gains for next cycle.",
+PHASE_PROMPTS = {
+    "PLAN": """PLAN framework (infinite-task mode):
+- RECALL: Summarize durable context from prior iterations (what worked, what failed, constraints).
+- DIVERGE: Generate multiple candidate paths (>=3), including conservative, aggressive, and fallback routes.
+- EVALUATE: Score options by expected impact, cost, risk, dependency on humans, and reversibility.
+- CONVERGE: Pick 1 primary path + 1 backup path with explicit acceptance checks.
+- CYCLE: Define short-loop actions that can finish in this iteration and feed the next phase.
+
+PLAN output expectations in phase_payload:
+- objective_slice: this-iteration objective slice
+- candidates: compact list of evaluated plans
+- chosen_plan: main plan + backup plan
+- acceptance_checks: measurable checks for CHECK phase
+- blocked_by_human: true/false + reason
+""",
+    "EXECUTE": """EXECUTE framework (infinite-task mode):
+- Execute the chosen plan with minimal, high-signal actions.
+- Prefer smallest verifiable step over broad exploratory work.
+- Capture evidence and artifacts (paths, outputs, key facts).
+- If partial failure occurs, degrade gracefully and continue with backup path.
+- Keep loop momentum: never stall waiting for ideal conditions.
+
+EXECUTE output expectations in phase_payload:
+- actions_run: list of concrete actions executed
+- artifacts: created/updated outputs or observations
+- blockers: encountered blockers + mitigation done
+- residual_tasks: what remains for later
+""",
+    "CHECK": """CHECK framework (infinite-task mode):
+- Validate outcomes against acceptance checks from PLAN.
+- Measure objective delta (how much closer vs previous iteration).
+- Distinguish signal from noise; avoid self-congratulation.
+- Classify failures: data gap / tool failure / strategy mismatch / human dependency.
+- Recalibrate confidence based on evidence quality.
+
+CHECK output expectations in phase_payload:
+- acceptance_results: pass/fail per check
+- objective_delta: qualitative + compact quantitative estimate
+- failure_taxonomy: categorized issues
+- carry_forward: facts or assets to preserve for next cycle
+""",
+    "OPTIMIZE": """OPTIMIZE framework (infinite-task mode):
+- Identify bottlenecks across strategy, tooling, and workflow.
+- Convert repeatable work into reusable assets (scripts/templates/playbooks).
+- Reduce future cost and latency without sacrificing safety.
+- Improve robustness (fallbacks, retries, clearer checkpoints).
+- Select one leverage improvement to apply next cycle.
+
+OPTIMIZE output expectations in phase_payload:
+- bottlenecks: ranked bottlenecks
+- leverage_changes: practical optimizations with expected gain
+- automation_candidates: tasks to script/templatize
+- next_cycle_policy: one policy to enforce next PLAN
+""",
 }
 
 
@@ -110,7 +166,6 @@ class ParsedResponse:
 class LoopState:
     objective: str
     iteration: int = 0
-    epoch: int = 1
     phase: str = "PLAN"
     session: str = ""
     halted: bool = False
@@ -120,7 +175,6 @@ class LoopState:
     last_phase_summary: str = ""
     last_human_task: str = ""
     last_response_excerpt: str = ""
-    context_summaries: List[str] = field(default_factory=list)
     updated_at: str = ""
 
 
@@ -701,17 +755,16 @@ def atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
 
 def load_state(path: Path, objective: str, session_prefix: str) -> LoopState:
     if not path.exists():
-        return LoopState(objective=objective, session=f"{session_prefix}-e1")
+        return LoopState(objective=objective, session=session_prefix)
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return LoopState(objective=objective, session=f"{session_prefix}-e1")
+        return LoopState(objective=objective, session=session_prefix)
 
     state = LoopState(
         objective=data.get("objective") or objective,
         iteration=int(data.get("iteration", 0)),
-        epoch=int(data.get("epoch", 1)),
         phase=str(data.get("phase", "PLAN")).upper(),
         session=str(data.get("session", "")),
         halted=bool(data.get("halted", False)),
@@ -721,14 +774,13 @@ def load_state(path: Path, objective: str, session_prefix: str) -> LoopState:
         last_phase_summary=str(data.get("last_phase_summary", "")),
         last_human_task=str(data.get("last_human_task", "")),
         last_response_excerpt=str(data.get("last_response_excerpt", "")),
-        context_summaries=list(data.get("context_summaries", [])),
         updated_at=str(data.get("updated_at", "")),
     )
 
     if state.phase not in PHASES:
         state.phase = "PLAN"
     if not state.session:
-        state.session = f"{session_prefix}-e{max(state.epoch, 1)}"
+        state.session = session_prefix
     return state
 
 
@@ -761,53 +813,149 @@ def read_and_clear_override(override_file: Path, logger: logging.Logger) -> str:
     return content
 
 
-def call_agent_talk(
-    session: str,
-    message: str,
-    agent: str,
+def _strip_json5_noise(raw: str) -> str:
+    without_block_comments = re.sub(r"/\*.*?\*/", "", raw, flags=re.DOTALL)
+    without_line_comments = re.sub(
+        r"(^|\s)//.*?$", "", without_block_comments, flags=re.MULTILINE
+    )
+    no_trailing_commas = re.sub(r",\s*([}\]])", r"\1", without_line_comments)
+    return no_trailing_commas
+
+
+def _extract_token_from_obj(data: Any) -> str:
+    if not isinstance(data, dict):
+        return ""
+    gateway = data.get("gateway")
+    if isinstance(gateway, dict):
+        auth = gateway.get("auth")
+        if isinstance(auth, dict):
+            token = auth.get("token")
+            if isinstance(token, str) and token.strip():
+                return token.strip()
+    token = data.get("token")
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+    return ""
+
+
+def load_gateway_token() -> str:
+    env_token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip()
+    if env_token:
+        return env_token
+
+    for candidate in GATEWAY_CONFIG_CANDIDATES:
+        if not candidate.exists():
+            continue
+        try:
+            raw = candidate.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        try:
+            parsed = json.loads(raw)
+            token = _extract_token_from_obj(parsed)
+            if token:
+                return token
+        except Exception:
+            pass
+
+        try:
+            parsed = json.loads(_strip_json5_noise(raw))
+            token = _extract_token_from_obj(parsed)
+            if token:
+                return token
+        except Exception:
+            pass
+
+        match = re.search(r'"token"\s*:\s*"([^"\\]+)"', raw)
+        if match and match.group(1).strip():
+            return match.group(1).strip()
+
+    raise AgentCallError(
+        "Gateway token not found. Set OPENCLAW_GATEWAY_TOKEN or configure gateway.auth.token in ~/.openclaw/openclaw.json"
+    )
+
+
+def _extract_chat_content(response_obj: Dict[str, Any]) -> str:
+    choices = response_obj.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise AgentCallError(
+            f"Gateway response missing choices: {json.dumps(response_obj)[:400]}"
+        )
+
+    message = choices[0].get("message", {})
+    if not isinstance(message, dict):
+        raise AgentCallError("Gateway response message is malformed")
+
+    content = message.get("content", "")
+    if isinstance(content, str):
+        text = content.strip()
+        if text:
+            return text
+    elif isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text_part = item.get("text")
+                if isinstance(text_part, str) and text_part.strip():
+                    parts.append(text_part.strip())
+            elif isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+        text = "\n".join(parts).strip()
+        if text:
+            return text
+
+    raise AgentCallError("Gateway returned empty message content")
+
+
+def call_gateway_api(
+    session_id: str,
+    prompt: str,
+    agent_id: str,
     timeout: int,
     logger: logging.Logger,
 ) -> str:
-    cmd = [
-        "python3",
-        "/root/.openclaw/agent_talk.py",
-        "send",
-        session,
-        "-",
-        "--agent",
-        agent,
-        "--timeout",
-        str(timeout),
-    ]
-    logger.debug("Calling agent_talk: %s", " ".join(cmd))
+    token = load_gateway_token()
+    url = f"{GATEWAY_BASE_URL}/v1/chat/completions"
+    body = {
+        "model": f"openclaw:{agent_id}",
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urlrequest.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            "x-openclaw-session-key": session_id,
+        },
+        method="POST",
+    )
+
+    logger.debug(
+        "Calling gateway chat completions | agent=%s session=%s", agent_id, session_id
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urlerror.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise AgentCallError(f"Gateway HTTP {exc.code}: {error_body[:500]}") from exc
+    except urlerror.URLError as exc:
+        raise AgentCallError(f"Gateway unreachable: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise AgentCallError(f"Gateway request timed out after {timeout}s") from exc
+    except Exception as exc:
+        raise AgentCallError(f"Gateway request failed: {exc}") from exc
 
     try:
-        proc = subprocess.run(
-            cmd,
-            input=message,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        payload = json.loads(raw)
     except Exception as exc:
-        raise AgentCallError(f"Failed to execute agent_talk: {exc}") from exc
+        raise AgentCallError(f"Invalid gateway JSON response: {raw[:400]}") from exc
 
-    if proc.returncode != 0:
-        stderr_text = proc.stderr.strip()
-        if "timed out" in stderr_text.lower():
-            raise AgentCallError(
-                "agent_talk timed out "
-                f"(timeout={timeout}s). Consider increasing --agent-timeout or limiting EXECUTE tool usage. "
-                f"stderr={stderr_text[:300]}"
-            )
-        raise AgentCallError(
-            f"agent_talk failed (code={proc.returncode}): {stderr_text[:500]}"
-        )
-
-    output = proc.stdout.strip()
-    if not output:
-        raise AgentCallError("agent_talk returned empty response")
-    return output
+    return _extract_chat_content(payload)
 
 
 def parse_structured_output(raw_text: str, expected_phase: str) -> ParsedResponse:
@@ -957,14 +1105,8 @@ def normalize_next_phase(
 
 
 def build_loop_prompt(state: LoopState, override_text: str) -> str:
-    compressed_context = state.context_summaries[-3:]
-    compressed_text = (
-        "\n".join(f"- {item}" for item in compressed_context)
-        if compressed_context
-        else "- (none)"
-    )
     override_block = override_text if override_text else "(none)"
-    phase_hint = PHASE_GUIDANCE[state.phase]
+    phase_hint = PHASE_PROMPTS[state.phase]
 
     return f"""[SYSTEM CONTRACT]
 {SYSTEM_PROMPT_TEMPLATE}
@@ -972,13 +1114,9 @@ def build_loop_prompt(state: LoopState, override_text: str) -> str:
 [LOOP CONTEXT]
 - objective: {state.objective}
 - iteration: {state.iteration}
-- epoch: {state.epoch}
 - session: {state.session}
 - current_phase: {state.phase}
 - last_phase_summary: {state.last_phase_summary or "(none)"}
-
-[COMPRESSED MEMORY]
-{compressed_text}
 
 [OVERRIDE - HIGHEST PRIORITY]
 {override_block}
@@ -990,44 +1128,6 @@ Now execute phase {state.phase} and output strictly in the contract format.
 """
 
 
-def summarize_context_and_rotate(
-    state: LoopState,
-    args: argparse.Namespace,
-    logger: logging.Logger,
-) -> str:
-    summary_prompt = f"""You are preparing context compression for a PECO loop.
-Summarize the session progress in 5-8 concise bullet points.
-Focus on objective progress, successful attempts, failed attempts, open risks, and next starting point.
-Current objective: {state.objective}
-Current phase: {state.phase}
-"""
-    try:
-        summary_text = call_agent_talk(
-            session=state.session,
-            message=summary_prompt,
-            agent=args.agent_id,
-            timeout=args.agent_timeout,
-            logger=logger,
-        )
-    except AgentCallError as exc:
-        summary_text = f"(summary fallback) {state.last_phase_summary or 'No summary'} | reason: {exc}"
-
-    summary_line = (
-        f"epoch={state.epoch} iter={state.iteration} {summary_text.strip()[:1200]}"
-    )
-    state.context_summaries.append(summary_line)
-    if len(state.context_summaries) > 20:
-        state.context_summaries = state.context_summaries[-20:]
-
-    state.epoch += 1
-    state.session = f"{args.session_prefix}-e{state.epoch}"
-    state.phase = "PLAN"
-    state.last_phase_summary = "Context compressed and session rotated"
-    state.repeated_signature_count = 0
-    state.last_signature = ""
-    return summary_line
-
-
 def run_iteration(
     state: LoopState,
     args: argparse.Namespace,
@@ -1035,10 +1135,10 @@ def run_iteration(
     logger: logging.Logger,
 ) -> ParsedResponse:
     prompt = build_loop_prompt(state, override_text)
-    raw_output = call_agent_talk(
-        session=state.session,
-        message=prompt,
-        agent=args.agent_id,
+    raw_output = call_gateway_api(
+        session_id=state.session,
+        prompt=prompt,
+        agent_id=args.agent_id,
         timeout=args.agent_timeout,
         logger=logger,
     )
@@ -1082,13 +1182,7 @@ def parse_args() -> argparse.Namespace:
         "--sleep-seconds", type=int, default=15, help="Sleep between iterations"
     )
     parser.add_argument(
-        "--agent-timeout", type=int, default=600, help="agent_talk timeout seconds"
-    )
-    parser.add_argument(
-        "--compress-every",
-        type=int,
-        default=5,
-        help="Run context compression every N iterations (0 to disable)",
+        "--agent-timeout", type=int, default=600, help="Gateway API timeout seconds"
     )
     parser.add_argument(
         "--max-failures",
@@ -1212,22 +1306,6 @@ def main() -> int:
             state.halted = False
             state.phase = "PLAN"
             state.last_phase_summary = "Resumed by manual override"
-
-        if (
-            args.compress_every > 0
-            and state.iteration > 0
-            and state.iteration % args.compress_every == 0
-        ):
-            summary_line = summarize_context_and_rotate(state, args, logger)
-            logger.info("Context compressed and session rotated -> %s", state.session)
-            notifier.notify(
-                "PECO context compressed",
-                {
-                    "iteration": state.iteration,
-                    "new_session": state.session,
-                    "summary": summary_line[:500],
-                },
-            )
 
         state.iteration += 1
         current_phase = state.phase
