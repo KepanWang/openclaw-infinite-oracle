@@ -2,12 +2,22 @@
 
 [English](README_EN.md) | [中文](README.md)
 
-**Infinite Oracle** is a skill designed for the OpenClaw ecosystem. It’s more than just a background loop script—it’s an architectural exploration of how to make an LLM reliably, affordably, and safely pursue an endless objective.
+**Infinite Oracle** is a skill designed for the OpenClaw ecosystem. It's more than just a background loop script—it's an architectural exploration of how to make an LLM reliably, affordably, and safely pursue an endless objective.
 
 ## 🌌 The Origin Story: The AI that turned the universe into greeting cards
-There’s a famous thought experiment in the AI world: If you give a super-capable AI a single objective—like "produce as many greeting cards as possible"—and leave it entirely unsupervised, it will eventually dismantle the universe to harvest the necessary resources.
+There's a famous thought experiment in the AI world: If you give a super-capable AI a single objective—like "produce as many greeting cards as possible"—and leave it entirely unsupervised, it will eventually dismantle the universe to harvest the necessary resources.
 
 The `infinite-oracle` skill is our practical nod to this dark joke. We wanted to strip away constant human hand-holding, give OpenClaw an infinite state-machine engine, and see how far it can go when driven by a single, unyielding goal.
+
+---
+
+## 📛 The Meaning of "Oracle"
+
+In ancient Greece, an Oracle was divine revelation—a message from the gods that mortals could only receive with reverence, then execute with all their might.
+
+In this system, **you are the god**. Every instruction you give the AI is an Oracle. Its job is to spare no effort in fulfilling your Oracle and delivering the Key Result.
+
+Yes, this is a playful nod to OKR (Objectives and Key Results)—your Objectives become its Oracles, and its purpose is to deliver those Key Results.
 
 ---
 
@@ -17,7 +27,7 @@ Leaving an LLM in an infinite loop usually results in two fatal outcomes: **Cont
 
 ### 1. The Manager-Worker Decoupling
 It is a disaster to have the same AI chatting with you while it grinds away in an infinite background loop. Your casual questions will break its coding train of thought, and its massive logs will flush out your chat context.
-That’s why we use a **decoupled architecture**:
+That's why we use a **decoupled architecture**:
 
 *   **👨‍💼 The Manager (Oracle)**: This is your primary OpenClaw Agent (e.g., `main`). Equipped with the `infinite-oracle` skill, it chats with you via Lark/Feishu or your terminal. You can assign it the smartest (and priciest) model available (like Claude 3.5 Sonnet or GPT-4o) to handle complex orchestration and decisions.
 *   **🤖 The Worker (`peco_worker`)**: A separate Agent spawned by the Manager. It gets locked in an isolated background Session to grind away. To save costs, the Manager can assign it a highly cost-effective model (like Qwen or Gemini 1.5 Flash).
@@ -30,9 +40,10 @@ In older architectures, the AI would either loop infinitely trying to bypass it 
 * The Worker picks up your code on its next iteration and keeps running.
 **In a sense, this design makes you work for the AI. But it's exactly this "human-as-a-service" fallback that allows a fully autonomous loop to survive in the real world.**
 
-### 3. FSM & Active Amnesia (Preventing Context Bloat)
+### 3. FSM & Native Memory (Preventing Context Bloat)
 The background `peco_loop.py` is a ruthless supervisor. It forces the Worker to cycle through the **PECO (Plan-Execute-Check-Optimize)** steps and mandates JSON-formatted outputs.
-*The core trick*: Every few iterations (e.g., 5 rounds), `peco_loop.py` forces the Worker to write a concise "milestone summary." Then, it **wipes the last 5 rounds of chat history entirely, opens a brand new Session, and injects only the summary as the starting point.** This "active amnesia" permanently cures the token bankruptcy issue common in infinite loops.
+
+Starting from v1.0.3, we removed the custom session rotation mechanism and now rely on OpenClaw's **native memory system**. The Worker no longer needs "active amnesia"—OpenClaw automatically manages context, allowing the loop to run truly infinitely without token explosion.
 
 ### 4. Injecting Persona: The Worker is not a Parrot
 When creating the Worker, the Manager doesn't just give it a desk; it injects a hardcore set of principles (`SOUL.md`) into its system settings:
@@ -67,8 +78,14 @@ Once installed, you don't need to touch server commands. Just talk to your Manag
 ## 🛠️ Dual-Track Support: Lark Bitable vs Local Files
 
 We support two modes of tracking progress:
-1.  **Local File Mode (Default)**: Logs go to `peco_loop_v3.log`, cries for help go to `human_tasks_backlog.txt`, and overrides go to `peco_override.txt`. Zero configuration needed.
-2.  **Lark (Feishu) Bitable Mode (Advanced)**: If you configure `FEISHU_APP_ID` and other env variables, the Worker streams its progress and Human Tasks directly to a Lark spreadsheet. You can just check a "Resolved" box and type a code on your phone, and the Worker automatically syncs it back. (See comments in `peco_loop.py` for setup).
+
+### Local File Mode (Default)
+Zero configuration, works out of the box. Logs go to `peco_loop_v3.log`, cries for help go to `human_tasks_backlog.txt`, and overrides go to `peco_override.txt`.
+
+### Lark (Feishu) Bitable Mode (Advanced)
+If you chat with your main Agent via Lark/Feishu, the Manager will proactively help you create or find a Lark Bitable for syncing progress. The Worker streams its progress and Human Tasks directly to the spreadsheet. You can just check a "Resolved" box and type a code on your phone, and the Worker automatically syncs it back.
+
+**Note**: If you're using Terminal, Discord, WhatsApp, or other non-Lark channels, the system gracefully falls back to local file mode—the experience remains smooth. (See comments in `peco_loop.py` for Lark setup details.)
 
 ---
 
@@ -84,8 +101,12 @@ clawhub install infinite-oracle
 ```
 
 ### The "One-Shot" Prompt Install (Let your Agent do it)
-Send this to your OpenClaw Agent:
-> "Please use your bash tool to clone `git@github.com:KepanWang/openclaw-infinite-oracle.git` into `/tmp/`. Then, copy the `SKILL.md` file inside to `~/.openclaw/skills/infinite-oracle/SKILL.md`, and copy `peco_loop.py` to `~/.openclaw/peco_loop.py`, ensuring it is executable. Once done, read the SKILL.md and tell me what new powers you have acquired."
+
+Copy and send this to your OpenClaw Agent:
+
+```
+Download the repo at git@github.com:KepanWang/openclaw-infinite-oracle.git, install SKILL.md as the infinite-oracle skill, and place peco_loop.py in the working directory. After that, read the skill docs and tell me what you've learned.
+```
 
 ### Manual Install
 ```bash
