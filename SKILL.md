@@ -1,6 +1,7 @@
 ---
 name: "infinite-oracle"
 description: "Manager-first orchestration for a dedicated PECO worker: proactive installation, SOUL addendum injection, and optional Feishu-backed human-in-the-loop operations."
+version: "1.0.2"
 ---
 
 # infinite-oracle
