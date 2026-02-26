@@ -98,6 +98,7 @@ PLAN output expectations in phase_payload:
     "EXECUTE": """EXECUTE framework (infinite-task mode):
 - Execute the chosen plan with minimal, high-signal actions.
 - Prefer smallest verifiable step over broad exploratory work.
+- Prioritize reusing existing tools/scripts/assets before creating new ones.
 - Capture evidence and artifacts (paths, outputs, key facts).
 - If partial failure occurs, degrade gracefully and continue with backup path.
 - Keep loop momentum: never stall waiting for ideal conditions.
