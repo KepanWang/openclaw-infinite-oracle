@@ -46,6 +46,7 @@ DECISIONS = {"continue", "retry", "halt"}
 PHASE_TAG_RE = re.compile(r"\[PHASE:([A-Za-z_]+)\]")
 HUMAN_TASK_TAG_RE = re.compile(r"\[HUMAN_TASK:(.*?)\]", re.IGNORECASE | re.DOTALL)
 JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.IGNORECASE | re.DOTALL)
+BACKLOG_TASK_RE = re.compile(r"task=(.*)$")
 
 FEISHU_DEFAULT_APP_TOKEN = ""
 FEISHU_DEFAULT_PROGRESS_TABLE_ID = ""
@@ -78,6 +79,10 @@ Output contract:
 7) If blocked by human-only requirements, continue non-blocked work and emit [HUMAN_TASK:...].
 8) HUMAN_TASK must be async-friendly: no tight deadlines, avoid "reply in 10 minutes", prefer one-time durable setup/actions.
 9) decision=halt only when no meaningful progress path exists.
+10) Autonomy-first rule: when a choice can be made safely with available tools/resources, decide and execute directly without asking human.
+11) Emit [HUMAN_TASK:...] only for truly human-exclusive resources (e.g., OTP/device/real-world approvals) after exhausting practical alternatives.
+12) When repeated_human_blocker_count >= 2, increase divergent thinking (>=5 options) and execute at least one non-human workaround attempt.
+13) When repeated_human_blocker_count >= 3 for the same blocker, set decision=halt, summarize blocker clearly, and request manager escalation to notify human.
 """
 
 PHASE_PROMPTS = {
@@ -94,6 +99,7 @@ PLAN output expectations in phase_payload:
 - chosen_plan: main plan + backup plan
 - acceptance_checks: measurable checks for CHECK phase
 - blocked_by_human: true/false + reason
+- if repeated_human_blocker_count >= 2, include expanded_candidates (>=5) focused on non-human workarounds
 """,
     "EXECUTE": """EXECUTE framework (infinite-task mode):
 - Execute the chosen plan with minimal, high-signal actions.
@@ -175,6 +181,8 @@ class LoopState:
     last_signature: str = ""
     last_phase_summary: str = ""
     last_human_task: str = ""
+    last_human_task_signature: str = ""
+    repeated_human_blocker_count: int = 0
     last_response_excerpt: str = ""
     updated_at: str = ""
 
@@ -537,6 +545,13 @@ class FeishuSync:
         if not human_desc:
             return False
         try:
+            human_signature = normalize_human_task(human_desc)
+            if self.has_human_task(human_signature):
+                self.logger.info(
+                    "Skip duplicated Feishu human task: %s", human_desc[:200]
+                )
+                return False
+
             self._ensure_field_maps()
             mapping = self._human_field_map
             fields: Dict[str, Any] = {}
@@ -555,6 +570,28 @@ class FeishuSync:
         except Exception as exc:
             self.logger.warning("Feishu append_human_task failed: %s", exc)
             return False
+
+    def has_human_task(self, task_signature: str) -> bool:
+        if not task_signature:
+            return False
+
+        try:
+            self._ensure_field_maps()
+            desc_field = self._human_field_map.get("desc", "")
+            if not desc_field:
+                return False
+
+            records = self._list_records(self.human_table_id)
+            for record in records:
+                fields = record.get("fields", {})
+                if not isinstance(fields, dict):
+                    continue
+                existing_desc = self._as_text(fields.get(desc_field))
+                if normalize_human_task(existing_desc) == task_signature:
+                    return True
+        except Exception as exc:
+            self.logger.warning("Feishu has_human_task check failed: %s", exc)
+        return False
 
     def fetch_and_consume_resolved_tasks(self) -> str:
         try:
@@ -724,6 +761,29 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def normalize_human_task(task: str) -> str:
+    return re.sub(r"\s+", " ", task).strip().casefold()
+
+
+def backlog_has_human_task(backlog_file: Path, task_signature: str) -> bool:
+    if not task_signature or not backlog_file.exists():
+        return False
+
+    try:
+        lines = backlog_file.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return False
+
+    for line in lines:
+        match = BACKLOG_TASK_RE.search(line)
+        if not match:
+            continue
+        existing_signature = normalize_human_task(match.group(1))
+        if existing_signature == task_signature:
+            return True
+    return False
+
+
 def setup_logger(log_file: Path, level: str) -> logging.Logger:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("peco_loop")
@@ -774,6 +834,8 @@ def load_state(path: Path, objective: str, session_prefix: str) -> LoopState:
         last_signature=str(data.get("last_signature", "")),
         last_phase_summary=str(data.get("last_phase_summary", "")),
         last_human_task=str(data.get("last_human_task", "")),
+        last_human_task_signature=str(data.get("last_human_task_signature", "")),
+        repeated_human_blocker_count=int(data.get("repeated_human_blocker_count", 0)),
         last_response_excerpt=str(data.get("last_response_excerpt", "")),
         updated_at=str(data.get("updated_at", "")),
     )
@@ -1048,15 +1110,26 @@ def append_human_task_backlog(
     logger: logging.Logger,
     notifier: FeishuNotifier,
     feishu_sync: Optional[FeishuSync],
-) -> None:
+) -> int:
     human_task = parsed.human_task.strip()
     if not human_task:
-        return
+        state.last_human_task = ""
+        state.last_human_task_signature = ""
+        state.repeated_human_blocker_count = 0
+        return 0
 
-    if human_task == state.last_human_task:
-        return
-
+    task_signature = normalize_human_task(human_task)
+    if task_signature == state.last_human_task_signature:
+        state.repeated_human_blocker_count += 1
+    else:
+        state.repeated_human_blocker_count = 1
+    state.last_human_task_signature = task_signature
     state.last_human_task = human_task
+
+    if backlog_has_human_task(backlog_file, task_signature):
+        logger.info("Skip duplicated local human task: %s", human_task[:200])
+        return state.repeated_human_blocker_count
+
     alert = f"🚨 【系统求助】 Agent 遇到了能力瓶颈，请求人类协助：{human_task}"
     logger.warning(alert)
     notifier.notify(
@@ -1079,6 +1152,8 @@ def append_human_task_backlog(
 
     if feishu_sync:
         feishu_sync.append_human_task(human_task)
+
+    return state.repeated_human_blocker_count
 
 
 def merge_override_text(local_override: str, feishu_override: str) -> str:
@@ -1118,6 +1193,8 @@ def build_loop_prompt(state: LoopState, override_text: str) -> str:
 - session: {state.session}
 - current_phase: {state.phase}
 - last_phase_summary: {state.last_phase_summary or "(none)"}
+- repeated_human_blocker_count: {state.repeated_human_blocker_count}
+- last_human_blocker: {state.last_human_task or "(none)"}
 
 [OVERRIDE - HIGHEST PRIORITY]
 {override_block}
@@ -1127,6 +1204,96 @@ def build_loop_prompt(state: LoopState, override_text: str) -> str:
 
 Now execute phase {state.phase} and output strictly in the contract format.
 """
+
+
+def append_manager_notification_file(
+    manager_notify_file: Path, payload: Dict[str, Any], logger: logging.Logger
+) -> None:
+    try:
+        manager_notify_file.parent.mkdir(parents=True, exist_ok=True)
+        record = dict(payload)
+        record["timestamp"] = utc_now()
+        with manager_notify_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning("Failed writing manager notification file: %s", exc)
+
+
+def notify_manager_about_pause(
+    state: LoopState,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    notifier: FeishuNotifier,
+    manager_notify_file: Path,
+    reason: str,
+    source: str,
+    details: str,
+) -> None:
+    payload = {
+        "reason": reason,
+        "source": source,
+        "session": state.session,
+        "iteration": state.iteration,
+        "phase": state.phase,
+        "details": details[:2000],
+    }
+
+    manager_prompt = (
+        "[PAUSE REPORT]\n"
+        f"source={source}\n"
+        f"reason={reason}\n"
+        f"session={state.session}\n"
+        f"iteration={state.iteration}\n"
+        f"phase={state.phase}\n"
+        f"details={details}\n\n"
+        "Please notify the human operator why PECO paused and what input/action is required."
+    )
+
+    append_manager_notification_file(manager_notify_file, payload, logger)
+
+    try:
+        manager_session = f"{args.manager_session_prefix}:{state.session}"
+        manager_reply = call_gateway_api(
+            session_id=manager_session,
+            prompt=manager_prompt,
+            agent_id=args.manager_agent_id,
+            timeout=args.agent_timeout,
+            logger=logger,
+        )
+        logger.info(
+            "Manager notified for pause | reason=%s | source=%s | manager_agent=%s",
+            reason,
+            source,
+            args.manager_agent_id,
+        )
+        notifier.notify(
+            "PECO manager notified",
+            {
+                "reason": reason,
+                "source": source,
+                "session": state.session,
+                "iteration": state.iteration,
+                "manager_agent": args.manager_agent_id,
+                "manager_reply": manager_reply[:500],
+            },
+        )
+    except AgentCallError as exc:
+        logger.error(
+            "Failed notifying manager agent | reason=%s | error=%s",
+            reason,
+            exc,
+        )
+        notifier.notify(
+            "PECO manager notify failed",
+            {
+                "reason": reason,
+                "source": source,
+                "session": state.session,
+                "iteration": state.iteration,
+                "error": str(exc)[:500],
+                "details": details[:500],
+            },
+        )
 
 
 def run_iteration(
@@ -1159,6 +1326,16 @@ def parse_args() -> argparse.Namespace:
         "--agent-id",
         default="main",
         help="OpenClaw agent id for loop execution",
+    )
+    parser.add_argument(
+        "--manager-agent-id",
+        default="main",
+        help="OpenClaw manager agent id for pause notifications",
+    )
+    parser.add_argument(
+        "--manager-session-prefix",
+        default="peco-manager",
+        help="Session prefix for manager notifications",
     )
     parser.add_argument(
         "--agent",
@@ -1230,6 +1407,11 @@ def parse_args() -> argparse.Namespace:
         help="Log file path",
     )
     parser.add_argument(
+        "--manager-notify-file",
+        default="/root/.openclaw/peco_manager_notifications.log",
+        help="Local fallback log file for manager notifications",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -1247,9 +1429,11 @@ def main() -> int:
     state_file = Path(args.state_file)
     override_file = Path(args.override_file)
     backlog_file = Path(args.human_task_backlog)
+    manager_notify_file = Path(args.manager_notify_file)
     state_file.parent.mkdir(parents=True, exist_ok=True)
     override_file.parent.mkdir(parents=True, exist_ok=True)
     backlog_file.parent.mkdir(parents=True, exist_ok=True)
+    manager_notify_file.parent.mkdir(parents=True, exist_ok=True)
     if not override_file.exists():
         override_file.write_text("", encoding="utf-8")
 
@@ -1319,7 +1503,7 @@ def main() -> int:
 
         try:
             parsed = run_iteration(state, args, override_text, logger)
-            append_human_task_backlog(
+            repeated_human_blocker_count = append_human_task_backlog(
                 backlog_file,
                 state,
                 parsed,
@@ -1327,7 +1511,53 @@ def main() -> int:
                 notifier,
                 feishu_sync,
             )
+
+            if repeated_human_blocker_count >= 3:
+                escalation_summary = "Repeated human blocker detected 3 times; halting loop and requesting manager escalation"
+                state.halted = True
+                state.phase = "PLAN"
+                state.last_phase_summary = escalation_summary
+                notify_manager_about_pause(
+                    state=state,
+                    args=args,
+                    logger=logger,
+                    notifier=notifier,
+                    manager_notify_file=manager_notify_file,
+                    reason="repeated_human_blocker",
+                    source="model",
+                    details=(
+                        f"model_summary={parsed.summary}; "
+                        f"human_blocker={state.last_human_task}; "
+                        f"repeated_count={repeated_human_blocker_count}"
+                    ),
+                )
+                logger.error(
+                    "Human blocker escalated (count=%s): %s",
+                    repeated_human_blocker_count,
+                    state.last_human_task,
+                )
+                notifier.notify(
+                    "PECO manager escalation required",
+                    {
+                        "iteration": state.iteration,
+                        "session": state.session,
+                        "blocker": state.last_human_task,
+                        "repeated_human_blocker_count": repeated_human_blocker_count,
+                        "required_action": "Notify human of blocker and provide missing resource",
+                        "status": "Loop paused until override/human support",
+                    },
+                )
+                continue
+
+            if repeated_human_blocker_count >= 2:
+                logger.warning(
+                    "Repeated human blocker detected (count=%s), forcing PLAN for divergent solutions",
+                    repeated_human_blocker_count,
+                )
+
             next_phase = normalize_next_phase(current_phase, parsed.next_phase, logger)
+            if repeated_human_blocker_count >= 2:
+                next_phase = "PLAN"
 
             signature = (
                 f"{parsed.phase}|{next_phase}|{parsed.decision}|{parsed.summary[:120]}"
@@ -1389,6 +1619,20 @@ def main() -> int:
 
             if parsed.decision == "halt":
                 state.halted = True
+                notify_manager_about_pause(
+                    state=state,
+                    args=args,
+                    logger=logger,
+                    notifier=notifier,
+                    manager_notify_file=manager_notify_file,
+                    reason="agent_requested_halt",
+                    source="model",
+                    details=(
+                        f"model_summary={parsed.summary}; "
+                        f"decision={parsed.decision}; "
+                        f"phase={parsed.phase}"
+                    ),
+                )
                 logger.warning("Agent requested halt at iteration=%s", state.iteration)
                 notifier.notify(
                     "PECO halt requested",
@@ -1431,6 +1675,21 @@ def main() -> int:
 
             if state.consecutive_failures >= args.max_failures:
                 state.halted = True
+                pause_source = "code" if isinstance(exc, AgentCallError) else "model"
+                notify_manager_about_pause(
+                    state=state,
+                    args=args,
+                    logger=logger,
+                    notifier=notifier,
+                    manager_notify_file=manager_notify_file,
+                    reason="circuit_breaker_open",
+                    source=pause_source,
+                    details=(
+                        f"error={exc}; "
+                        f"consecutive_failures={state.consecutive_failures}; "
+                        f"max_failures={args.max_failures}"
+                    ),
+                )
                 logger.error(
                     "Circuit breaker opened after %s failures",
                     state.consecutive_failures,
