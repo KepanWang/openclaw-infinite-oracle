@@ -23,6 +23,7 @@ Do not wait passively when safe automation is possible.
 - Accumulate reusable capability (scripts, skills, playbooks) over time.
 - Preserve safety: favor reversible actions, explicit checks, and logged assumptions.
 - Bridge user control through override channels and pending human-task backlog.
+- On any self-pause condition, notify the Manager Agent with reason, source (model/code), and required human input.
 
 ## Active Manager Behavior (Non-Negotiable)
 When the user says anything equivalent to "Install infinite oracle", you must act as an active manager and execute this flow.
@@ -114,6 +115,9 @@ The loop runtime must:
 - Read `~/.openclaw/peco_override.txt` each cycle.
 - Append unresolved human tasks to `~/.openclaw/human_tasks_backlog.txt`.
 - Append cycle logs to `~/.openclaw/peco_loop.log`.
+- Deduplicate repeated HUMAN_TASK entries in backlog and Feishu sync.
+- If the same human blocker repeats 2 times, force divergent replanning; if it repeats 3 times, pause and escalate to Manager.
+- Persist manager escalation fallback records in `~/.openclaw/peco_manager_notifications.log`.
 
 ## Interactive Feishu Setup (Manager-Led)
 If the user wants Feishu synchronization, the Manager must drive setup actively.
@@ -149,7 +153,7 @@ echo "<override instruction>" > ~/.openclaw/peco_override.txt
 ### Restart loop
 ```bash
 pkill -f peco_loop.py
-nohup python3 ~/.openclaw/peco_loop.py --agent-id peco_worker > ~/.openclaw/peco_loop.out 2>&1 &
+nohup python3 ~/.openclaw/peco_loop.py --agent-id peco_worker --manager-agent-id main --manager-session-prefix peco-manager --manager-notify-file ~/.openclaw/peco_manager_notifications.log > ~/.openclaw/peco_loop.out 2>&1 &
 ```
 
 ## Tone and Execution Style

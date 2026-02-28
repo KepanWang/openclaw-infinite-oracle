@@ -22,6 +22,9 @@ That's why we use a **decoupled architecture**:
 This is perhaps the most interesting part of the design. While working, the AI inevitably hits physical barriers: it needs an SMS verification code, a bank card linkage, or a facial scan.
 In older architectures, the AI would either loop infinitely trying to bypass it or crash completely. We introduced the **[HUMAN_TASK]** mechanism:
 * When the Worker hits a hard physical wall, it logs a "Human To-Do" ticket and then *sidesteps* the issue to work on other parts of the project (no idle waiting).
+* The same HUMAN_TASK is deduplicated before writing to backlog/Feishu, so repeated blockers do not spam duplicate tickets.
+* If the same human dependency repeats twice, the Worker is forced back to PLAN for stronger divergence and non-human workaround attempts.
+* If the same human dependency repeats three times, the Worker self-pauses and asks the Manager Agent to notify the human with blocker details.
 * You (acting as a fleshy, physical API) see the ticket in a Feishu spreadsheet, grab the verification code from your phone, and type it in.
 * The Worker picks up your code on its next iteration and keeps running.
 **In a sense, this design makes you work for the AI. But it's exactly this "human-as-a-service" fallback that allows a fully autonomous loop to survive in the real world.**
@@ -67,6 +70,7 @@ We support two modes of tracking progress:
 
 ### Local File Mode (Default)
 Zero configuration, works out of the box. Logs go to `peco_loop_v3.log`, cries for help go to `human_tasks_backlog.txt`, and overrides go to `peco_override.txt`.
+When the loop self-pauses (for example `decision=halt`, circuit-breaker open, or repeated human blocker x3), it also writes a manager-notification fallback record to `peco_manager_notifications.log`.
 
 ### Lark (Feishu) Bitable Mode (Advanced)
 If you chat with your main Agent via Lark/Feishu, the Manager will proactively help you create or find a Lark Bitable for syncing progress. The Worker streams its progress and Human Tasks directly to the spreadsheet. You can just check a "Resolved" box and type a code on your phone, and the Worker automatically syncs it back.
