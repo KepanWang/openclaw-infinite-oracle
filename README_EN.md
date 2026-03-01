@@ -62,6 +62,13 @@ Once installed, you don't need to touch server commands. Just talk to your Manag
 > **"Oracle: The verification code for that site is 8888. Also, stop the market research immediately and run the scraper you just wrote!"**
 *(The Manager writes your command into the override file. On the next heartbeat, the Worker reads it and immediately pivots.)*
 
+### 🎯 4. Objective Tuning vs Objective Replacement (New)
+> **"Oracle: Keep current context, but tune the objective to prioritize executable scripts and validation reports."**
+*(The Manager runs the tuning flow: keep history/context, back up objective state files, append a tuning record, then continue execution.)*
+
+> **"Oracle: The current infinite objective is obsolete. Replace it completely and restart from scratch."**
+*(The Manager runs the full replacement flow: stop process, create timestamped backups, clear state/history artifacts, then restart with a brand-new objective.)*
+
 ---
 
 ## 🛠️ Dual-Track Support: Lark Bitable vs Local Files
@@ -71,6 +78,10 @@ We support two modes of tracking progress:
 ### Local File Mode (Default)
 Zero configuration, works out of the box. Logs go to `peco_loop_v3.log`, cries for help go to `human_tasks_backlog.txt`, and overrides go to `peco_override.txt`.
 When the loop self-pauses (for example `decision=halt`, circuit-breaker open, or repeated human blocker x3), it also writes a manager-notification fallback record to `peco_manager_notifications.log`.
+
+Objective management notes:
+- In tuning mode, changes are appended to `peco_objective_tuning.log` and existing progress/backlog history is preserved.
+- In replacement mode, the Manager executes a backup + reset + restart flow to prevent mixing old and new objectives.
 
 ### Lark (Feishu) Bitable Mode (Advanced)
 If you chat with your main Agent via Lark/Feishu, the Manager will proactively help you create or find a Lark Bitable for syncing progress. The Worker streams its progress and Human Tasks directly to the spreadsheet. You can just check a "Resolved" box and type a code on your phone, and the Worker automatically syncs it back.
