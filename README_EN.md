@@ -86,6 +86,13 @@ Objective management notes:
 ### Lark (Feishu) Bitable Mode (Advanced)
 If you chat with your main Agent via Lark/Feishu, the Manager will proactively help you create or find a Lark Bitable for syncing progress. The Worker streams its progress and Human Tasks directly to the spreadsheet. You can just check a "Resolved" box and type a code on your phone, and the Worker automatically syncs it back.
 
+Initialization constraints:
+- On a brand-new task or a full objective replacement, the Manager initializes a fresh empty table context and creates both the progress/log table and the human-help backlog table.
+- Each task maps to exactly one Feishu Bitable document link, and that single link must contain both the cycle-log table and the human-help table.
+- Field requirements are unified as: required `loop_status` field set + required `human_backlog` field set; `tasks` is an optional summary table (recommended).
+- Saved app credentials/integration IDs (for example app id/app secret) are preserved by default during new-task initialization, and are rotated only when the user explicitly asks for credential reset.
+- Do not split one task across two different Feishu Bitable document links (one for logs and one for human-help).
+
 **Note**: If you're using Terminal, Discord, WhatsApp, or other non-Lark channels, the system gracefully falls back to local file mode—the experience remains smooth. (See comments in `peco_loop.py` for Lark setup details.)
 
 ---

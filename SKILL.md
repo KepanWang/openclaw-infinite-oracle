@@ -1,7 +1,7 @@
 ---
 name: "infinite-oracle"
 description: "Manager-first orchestration for a dedicated PECO worker: proactive installation, SOUL addendum injection, and optional Feishu-backed human-in-the-loop operations."
-version: "1.0.6"
+version: "1.0.10"
 ---
 
 # infinite-oracle
@@ -125,13 +125,31 @@ If the user wants Feishu synchronization, the Manager must drive setup actively.
 ### Required Manager actions
 1. Check existing Feishu configuration state (environment variables, existing IDs, current integration mode).
 2. Ask the user for missing credentials (`FEISHU_APP_ID`, `FEISHU_APP_SECRET`) and any required table/app tokens.
-3. Use your available Feishu capabilities (`feishu-api-docs` and API tools) to create or validate the required Bitable structure for the user.
-4. If tool permissions are unavailable, provide exact step-by-step instructions with required fields and schema so the user can complete setup quickly.
+3. Preserve already saved app credentials/integration IDs by default during new-task initialization; only rotate or clear them when the user explicitly requests credential reset.
+4. Before writing any records, decide whether this is an in-place update or a new tracking context.
+5. If it is a newly created task OR a full objective replacement (not a normal update/tuning), create a brand-new empty Feishu Bitable document and initialize all required tables/fields.
+6. If it is only an in-place update/tuning of the current objective, reuse existing Bitable tables and do not recreate the document.
+7. Use your available Feishu capabilities (`feishu-api-docs` and API tools) to create or validate the required Bitable structure for the user.
+8. If tool permissions are unavailable, provide exact step-by-step instructions with required fields and schema so the user can complete setup quickly.
 
-### Bitable minimum schema (recommended)
-- `tasks` table: objective, status, owner, priority, updated_at
-- `human_backlog` table: blocker, required_human_input, resolution_status, resolved_value
-- `loop_status` table: cycle_index, plan, execute, check, optimize, last_error, timestamp
+### Bitable initialization trigger (must follow)
+- Trigger `create new empty Bitable document + schema init` when either condition is true:
+  - user starts a brand-new infinite task tracking context
+  - user requests full objective replacement/reset
+- Do NOT trigger new-document initialization for ordinary progress updates or minor objective tuning.
+
+### Single-link table structure (must follow)
+- For each task context, use one Feishu Bitable document link as the canonical tracking link.
+- Inside that single Bitable document, initialize at minimum:
+  - one cycle log/progress table
+  - one human-help backlog table
+- Do not split one task context into separate Bitable document links for logs vs human-help.
+
+### Unified table/schema rules (must follow)
+- Required table A (`loop_status`): `cycle_index`, `plan`, `execute`, `check`, `optimize`, `last_error`, `timestamp`
+- Required table B (`human_backlog`): `blocker`, `required_human_input`, `resolution_status`, `resolved_value`
+- Optional summary table (`tasks`, recommended): `objective`, `status`, `owner`, `priority`, `updated_at`
+- If `tasks` is not created, the required two tables above are still mandatory and sufficient.
 
 ### Interaction principle
 Do not push setup burden entirely to the user when you can automate with tools.
@@ -266,7 +284,7 @@ nohup python3 "$HOME/.openclaw/peco_loop.py" \
 
 Operator notes:
 - Do not use only override text for full objective replacement; use the reset flow above.
-- If Feishu mode is enabled, create a new objective row/context in Bitable to avoid mixing old and new progress.
+- If Feishu mode is enabled, initialize a brand-new empty Bitable document (with required schema) for the new objective to avoid mixing old and new progress.
 - Announce backup path to the user after reset, so rollback is possible.
 
 ### Restart loop
