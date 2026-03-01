@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 *.pyo
+AGENTS.md
+.DS_Store
