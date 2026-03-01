@@ -1,7 +1,7 @@
 ---
 name: "infinite-oracle"
 description: "Manager-first orchestration for a dedicated PECO worker: proactive installation, SOUL addendum injection, and optional Feishu-backed human-in-the-loop operations."
-version: "1.0.4"
+version: "1.0.6"
 ---
 
 # infinite-oracle
@@ -149,6 +149,125 @@ cat ~/.openclaw/human_tasks_backlog.txt
 ```bash
 echo "<override instruction>" > ~/.openclaw/peco_override.txt
 ```
+
+### Tune objective (incremental update, no full reset)
+Use this flow when the user wants to adjust the current objective (scope/priority/constraints) but keep ongoing context and progress history.
+
+Manager must do all steps in order:
+1) Stop loop process to avoid state write race.
+2) Backup only state/objective context files.
+3) Patch objective in state by appending a tuning note (do not delete history files).
+4) Record tuning event in a dedicated objective-tuning log.
+5) Restart loop and keep existing progress/backlog/log history.
+
+```bash
+# 1) Stop old loop
+pkill -f peco_loop.py || true
+
+# 2) Backup objective-related files
+ts=$(date +%Y%m%d-%H%M%S)
+backup_dir="$HOME/.openclaw/backups/peco-objective-tune-$ts"
+mkdir -p "$backup_dir"
+
+for f in \
+  "$HOME/.openclaw/peco_loop_state.json" \
+  "$HOME/.openclaw/peco_override.txt"
+do
+  if [ -f "$f" ]; then
+    cp "$f" "$backup_dir/"
+  fi
+done
+
+# 3) Tune objective in-place (replace <tuning note>)
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+state_path = Path.home() / ".openclaw" / "peco_loop_state.json"
+tune_note = "<tuning note>"
+
+if state_path.exists():
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    current = str(data.get("objective", "")).strip()
+    if current:
+        data["objective"] = f"{current} | TUNING({tune_note})"
+    else:
+        data["objective"] = tune_note
+    state_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+PY
+
+# 4) Record tuning event for auditability
+mkdir -p "$HOME/.openclaw"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] tuning=<tuning note> backup=$backup_dir" >> "$HOME/.openclaw/peco_objective_tuning.log"
+
+# 5) Restart loop (keep existing history files)
+nohup python3 "$HOME/.openclaw/peco_loop.py" \
+  --agent-id peco_worker \
+  --manager-agent-id main \
+  --manager-session-prefix peco-manager \
+  --manager-notify-file "$HOME/.openclaw/peco_manager_notifications.log" \
+  > "$HOME/.openclaw/peco_loop.out" 2>&1 &
+```
+
+Operator notes:
+- Do not run the full reset flow for minor tuning; that would erase active context/history.
+- Do not clear `human_tasks_backlog.txt` / `peco_loop.log` / `peco_manager_notifications.log` in tuning mode.
+- If `peco_loop_state.json` does not exist, restart with `--objective "<tuned objective>"` once to initialize state.
+- Announce tuning note and backup path to the user after completion.
+
+### Replace objective (full reset + backup)
+Use this flow when the user says the infinite objective must be fully replaced (not a minor adjustment).
+
+Manager must do all steps in order:
+1) Stop loop process first (avoid writing while backing up).
+2) Backup old runtime artifacts with a timestamp.
+3) Clear old state/history files so progress restarts from zero.
+4) Restart loop with a brand-new `--objective`.
+
+```bash
+# 1) Stop old loop
+pkill -f peco_loop.py || true
+
+# 2) Backup runtime artifacts
+ts=$(date +%Y%m%d-%H%M%S)
+backup_dir="$HOME/.openclaw/backups/peco-objective-reset-$ts"
+mkdir -p "$backup_dir"
+
+for f in \
+  "$HOME/.openclaw/peco_loop_state.json" \
+  "$HOME/.openclaw/peco_loop.log" \
+  "$HOME/.openclaw/peco_loop.out" \
+  "$HOME/.openclaw/human_tasks_backlog.txt" \
+  "$HOME/.openclaw/peco_override.txt" \
+  "$HOME/.openclaw/peco_manager_notifications.log"
+do
+  if [ -f "$f" ]; then
+    cp "$f" "$backup_dir/"
+  fi
+done
+
+# 3) Reset runtime files (fresh start)
+rm -f "$HOME/.openclaw/peco_loop_state.json"
+: > "$HOME/.openclaw/peco_loop.log"
+: > "$HOME/.openclaw/peco_loop.out"
+: > "$HOME/.openclaw/human_tasks_backlog.txt"
+: > "$HOME/.openclaw/peco_override.txt"
+: > "$HOME/.openclaw/peco_manager_notifications.log"
+
+# 4) Start loop with NEW objective (replace text below)
+nohup python3 "$HOME/.openclaw/peco_loop.py" \
+  --agent-id peco_worker \
+  --manager-agent-id main \
+  --manager-session-prefix peco-manager \
+  --manager-notify-file "$HOME/.openclaw/peco_manager_notifications.log" \
+  --objective "<new infinite objective>" \
+  > "$HOME/.openclaw/peco_loop.out" 2>&1 &
+```
+
+Operator notes:
+- Do not use only override text for full objective replacement; use the reset flow above.
+- If Feishu mode is enabled, create a new objective row/context in Bitable to avoid mixing old and new progress.
+- Announce backup path to the user after reset, so rollback is possible.
 
 ### Restart loop
 ```bash
