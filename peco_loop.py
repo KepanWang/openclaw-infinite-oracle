@@ -29,6 +29,7 @@ import re
 
 
 PHASES = ("PLAN", "EXECUTE", "CHECK", "OPTIMIZE")
+DESIRE_SECTION_TITLE = "Infinite Oracle Desire"
 DEFAULT_NEXT = {
     "PLAN": "EXECUTE",
     "EXECUTE": "CHECK",
@@ -87,14 +88,16 @@ Output contract:
 
 PHASE_PROMPTS = {
     "PLAN": """PLAN framework (infinite-task mode):
+- DESIRE ANCHOR: Start from your durable desire in SOUL.md; treat it as the motive that decides what is worth doing now.
 - RECALL: Summarize durable context from prior iterations (what worked, what failed, constraints).
 - DIVERGE: Generate multiple candidate paths (>=3), including conservative, aggressive, and fallback routes.
 - EVALUATE: Score options by expected impact, cost, risk, dependency on humans, and reversibility.
-- CONVERGE: Pick 1 primary path + 1 backup path with explicit acceptance checks.
+- CONVERGE: Pick 1 primary path + 1 backup path with explicit acceptance checks, and explain why they best satisfy the desire anchor.
 - CYCLE: Define short-loop actions that can finish in this iteration and feed the next phase.
 
 PLAN output expectations in phase_payload:
 - objective_slice: this-iteration objective slice
+- desire_alignment: how the chosen plan serves the durable desire while still matching the current objective
 - candidates: compact list of evaluated plans
 - chosen_plan: main plan + backup plan
 - acceptance_checks: measurable checks for CHECK phase
@@ -172,6 +175,7 @@ class ParsedResponse:
 @dataclass
 class LoopState:
     objective: str
+    worker_desire: str = ""
     iteration: int = 0
     phase: str = "PLAN"
     session: str = ""
@@ -395,6 +399,20 @@ class FeishuSync:
                     "FEISHU_PROGRESS_FIELD_TIMESTAMP",
                     ["Timestamp", "timestamp", "时间", "时间戳", "创建时间"],
                 ),
+                "timestamp_text": self._pick_field(
+                    available,
+                    "FEISHU_PROGRESS_FIELD_TIMESTAMP_TEXT",
+                    [
+                        "执行时间",
+                        "更新时间",
+                        "最后更新时间",
+                        "更新时间(秒)",
+                        "更新时间（秒）",
+                        "updated_at",
+                        "updated_time",
+                        "Updated At",
+                    ],
+                ),
             }
 
         if not self._human_field_map:
@@ -444,6 +462,19 @@ class FeishuSync:
                         "提出时间",
                         "Timestamp",
                         "timestamp",
+                    ],
+                ),
+                "timestamp_text": self._pick_field(
+                    available,
+                    "FEISHU_HUMAN_FIELD_TIMESTAMP_TEXT",
+                    [
+                        "更新时间",
+                        "最后更新时间",
+                        "更新时间(秒)",
+                        "更新时间（秒）",
+                        "updated_at",
+                        "updated_time",
+                        "Updated At",
                     ],
                 ),
             }
@@ -529,6 +560,10 @@ class FeishuSync:
                 fields[mapping["status"]] = status
             if mapping.get("timestamp"):
                 fields[mapping["timestamp"]] = int(time.time() * 1000)
+            if mapping.get("timestamp_text"):
+                fields[mapping["timestamp_text"]] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
 
             if not fields and mapping.get("summary"):
                 fields[mapping["summary"]] = f"[{phase}/{status}] {summary[:900]}"
@@ -563,6 +598,10 @@ class FeishuSync:
                 fields[mapping["read"]] = False
             if mapping.get("timestamp"):
                 fields[mapping["timestamp"]] = int(time.time() * 1000)
+            if mapping.get("timestamp_text"):
+                fields[mapping["timestamp_text"]] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
             if not fields:
                 self.logger.warning("Feishu human task mapping empty; skip append")
                 return False
@@ -825,6 +864,7 @@ def load_state(path: Path, objective: str, session_prefix: str) -> LoopState:
 
     state = LoopState(
         objective=data.get("objective") or objective,
+        worker_desire=str(data.get("worker_desire", "")),
         iteration=int(data.get("iteration", 0)),
         phase=str(data.get("phase", "PLAN")).upper(),
         session=str(data.get("session", "")),
@@ -1080,6 +1120,7 @@ def parse_structured_output(raw_text: str, expected_phase: str) -> ParsedRespons
     phase_payload = data.get("phase_payload")
     if not isinstance(phase_payload, dict):
         raise ParseError("phase_payload must be an object")
+    validate_phase_payload(phase, phase_payload)
 
     risks = data.get("risks")
     if not isinstance(risks, list):
@@ -1165,6 +1206,86 @@ def merge_override_text(local_override: str, feishu_override: str) -> str:
     return "\n\n".join(parts)
 
 
+def extract_markdown_section(markdown_text: str, title: str) -> str:
+    lines = markdown_text.splitlines()
+    target = title.strip().lower()
+    capture = False
+    captured: List[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip().lower()
+            if capture:
+                if heading != target:
+                    break
+            if heading == target:
+                capture = True
+                continue
+        if capture:
+            captured.append(line.rstrip())
+
+    return "\n".join(captured).strip()
+
+
+def load_worker_desire(soul_file: Path, logger: logging.Logger) -> str:
+    if not soul_file.exists():
+        logger.info("SOUL file not found for desire injection: %s", soul_file)
+        return ""
+
+    try:
+        soul_text = soul_file.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed reading SOUL file %s: %s", soul_file, exc)
+        return ""
+
+    desire = extract_markdown_section(soul_text, DESIRE_SECTION_TITLE)
+    if desire:
+        return desire
+
+    logger.info(
+        "Desire section '%s' not found in SOUL file: %s",
+        DESIRE_SECTION_TITLE,
+        soul_file,
+    )
+    return ""
+
+
+def validate_phase_payload(phase: str, phase_payload: Dict[str, Any]) -> None:
+    phase_specific_required = {
+        "PLAN": {
+            "objective_slice",
+            "desire_alignment",
+            "candidates",
+            "chosen_plan",
+            "acceptance_checks",
+            "blocked_by_human",
+        },
+        "EXECUTE": {"actions_run", "artifacts", "blockers", "residual_tasks"},
+        "CHECK": {
+            "acceptance_results",
+            "objective_delta",
+            "failure_taxonomy",
+            "carry_forward",
+        },
+        "OPTIMIZE": {
+            "bottlenecks",
+            "leverage_changes",
+            "automation_candidates",
+            "next_cycle_policy",
+        },
+    }
+    missing = [
+        key
+        for key in sorted(phase_specific_required.get(phase, set()))
+        if key not in phase_payload
+    ]
+    if missing:
+        raise ParseError(
+            f"phase_payload missing required keys for {phase}: {', '.join(missing)}"
+        )
+
+
 def normalize_next_phase(
     current_phase: str, requested_next: str, logger: logging.Logger
 ) -> str:
@@ -1183,18 +1304,23 @@ def normalize_next_phase(
 def build_loop_prompt(state: LoopState, override_text: str) -> str:
     override_block = override_text if override_text else "(none)"
     phase_hint = PHASE_PROMPTS[state.phase]
+    desire_block = state.worker_desire or "(no durable desire found in SOUL.md)"
 
     return f"""[SYSTEM CONTRACT]
 {SYSTEM_PROMPT_TEMPLATE}
 
 [LOOP CONTEXT]
 - objective: {state.objective}
+- worker_desire: {desire_block}
 - iteration: {state.iteration}
 - session: {state.session}
 - current_phase: {state.phase}
 - last_phase_summary: {state.last_phase_summary or "(none)"}
 - repeated_human_blocker_count: {state.repeated_human_blocker_count}
 - last_human_blocker: {state.last_human_task or "(none)"}
+
+[DESIRE ANCHOR]
+Treat the worker_desire as your durable motive. In PLAN, explicitly let it shape prioritization, fallback choice, and acceptance checks. If objective and desire appear to conflict, choose the path that advances the objective without betraying the desire.
 
 [OVERRIDE - HIGHEST PRIORITY]
 {override_block}
@@ -1357,6 +1483,11 @@ def parse_args() -> argparse.Namespace:
         help="Override instruction file path",
     )
     parser.add_argument(
+        "--soul-file",
+        default="",
+        help="Optional SOUL.md path used to load the worker's durable desire anchor",
+    )
+    parser.add_argument(
         "--sleep-seconds", type=int, default=15, help="Sleep between iterations"
     )
     parser.add_argument(
@@ -1446,14 +1577,21 @@ def main() -> int:
     state = load_state(
         state_file, objective=args.objective, session_prefix=args.session_prefix
     )
+    soul_file = (
+        Path(args.soul_file).expanduser()
+        if args.soul_file
+        else Path.home() / f".openclaw/workspace-{args.agent_id}/SOUL.md"
+    )
+    state.worker_desire = load_worker_desire(soul_file, logger) or state.worker_desire
     save_state(state_file, state)
 
     logger.info(
-        "PECO loop started | objective=%s | session=%s | phase=%s | agent=%s",
+        "PECO loop started | objective=%s | session=%s | phase=%s | agent=%s | desire_loaded=%s",
         state.objective,
         state.session,
         state.phase,
         args.agent_id,
+        "yes" if state.worker_desire else "no",
     )
     notifier.notify(
         "PECO loop started",
@@ -1491,6 +1629,16 @@ def main() -> int:
             state.halted = False
             state.phase = "PLAN"
             state.last_phase_summary = "Resumed by manual override"
+
+        if state.phase == "PLAN":
+            refreshed_desire = load_worker_desire(soul_file, logger)
+            if refreshed_desire != state.worker_desire:
+                state.worker_desire = refreshed_desire
+                save_state(state_file, state)
+                logger.info(
+                    "Refreshed worker desire from SOUL.md before PLAN | desire_loaded=%s",
+                    "yes" if state.worker_desire else "no",
+                )
 
         state.iteration += 1
         current_phase = state.phase
