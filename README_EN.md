@@ -76,7 +76,7 @@ Once installed, you don't need to touch server commands. Just talk to your Manag
 We support two modes of tracking progress:
 
 ### Local File Mode (Default)
-Zero configuration, works out of the box. Logs go to `peco_loop_v3.log`, cries for help go to `human_tasks_backlog.txt`, and overrides go to `peco_override.txt`.
+Zero configuration, works out of the box. Logs go to `peco_loop.log`, cries for help go to `human_tasks_backlog.txt`, and overrides go to `peco_override.txt`.
 When the loop self-pauses (for example `decision=halt`, circuit-breaker open, or repeated human blocker x3), it also writes a manager-notification fallback record to `peco_manager_notifications.log`.
 
 Objective management notes:
@@ -87,6 +87,7 @@ Objective management notes:
 If you chat with your main Agent via Lark/Feishu, the Manager will proactively help you create or find a Lark Bitable for syncing progress. The Worker streams its progress and Human Tasks directly to the spreadsheet. You can just check a "Resolved" box and type a code on your phone, and the Worker automatically syncs it back.
 
 Initialization constraints:
+- Terminology: one Feishu Bitable document link maps to one Bitable document/app; "multiple tables" here always means table tabs inside that same document, not separate Bitable document links.
 - On a brand-new task or a full objective replacement, the Manager initializes a fresh empty table context and creates both the progress/log table and the human-help backlog table.
 - Each task maps to exactly one Feishu Bitable document link, and that single link must contain both the cycle-log table and the human-help table.
 - Field requirements are unified as: required `loop_status` field set + required `human_backlog` field set; `tasks` is an optional summary table (recommended).
